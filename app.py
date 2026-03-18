@@ -1,6 +1,9 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+
+import os
+import requests
 import pandas as pd
 import numpy as np
 from sklearn.linear_model import LinearRegression
@@ -8,6 +11,25 @@ from sklearn.linear_model import LinearRegression
 from core.preprocess import preprocess
 from core.millipede_selector import select_variables
 from api.search import router as search_router
+
+DATA_DIR = "data"
+PARQUET_PATH = os.path.join(DATA_DIR, "fred_monthly_master_1994.parquet")
+
+def download_if_needed():
+    os.makedirs(DATA_DIR, exist_ok=True)
+
+    if not os.path.exists(PARQUET_PATH):
+        print("Downloading dataset...")
+
+        url = "https://YOUR_LINK_HERE/fred_monthly_master_1994.parquet"
+
+        r = requests.get(url)
+        with open(PARQUET_PATH, "wb") as f:
+            f.write(r.content)
+
+        print("Download complete.")
+
+download_if_needed()
 
 app = FastAPI()
 

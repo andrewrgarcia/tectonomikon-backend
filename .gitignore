@@ -11,3 +11,4 @@ wheels/
 
 scripts/_old
 data
+!data/fred_id_to_title.json
