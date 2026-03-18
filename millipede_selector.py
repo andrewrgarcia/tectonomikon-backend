@@ -112,10 +112,25 @@ def select_variables(
     # PREP DATA
     # ----------------------------
     cols = predictors + [target]
-    df_sub = df[cols]
+    df_sub = df[cols].copy()
 
-    # simple mean imputation
+    # ----------------------------
+    # 1. Impute
+    # ----------------------------
     df_sub = df_sub.fillna(df_sub.mean())
+
+    # ----------------------------
+    # 2. STANDARDIZE (CRITICAL)
+    # ----------------------------
+    mean = df_sub.mean()
+    std = df_sub.std().replace(0, 1)
+
+    df_sub = (df_sub - mean) / std
+
+    # ----------------------------
+    # 3. DROP ANY REMAINING NaNs
+    # ----------------------------
+    df_sub = df_sub.replace([np.inf, -np.inf], np.nan).dropna()
 
     print(f"Matrix shape passed to millipede: {df_sub.shape}")
 

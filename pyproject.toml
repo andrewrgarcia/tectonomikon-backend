@@ -9,6 +9,7 @@ dependencies = [
     "millipede",
     "numpy>=2.4.3",
     "pandas>=3.0.1",
+    "pyarrow>=23.0.1",
     "scikit-learn>=1.8.0",
     "uvicorn>=0.42.0",
 ]
