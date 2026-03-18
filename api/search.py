@@ -1,5 +1,3 @@
-# backend/search.py
-
 import json
 from fastapi import APIRouter, Query
 

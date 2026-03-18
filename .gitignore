@@ -10,5 +10,4 @@ wheels/
 .venv
 
 scripts/_old
-data/processed
-data/raw
+data

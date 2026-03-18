@@ -5,9 +5,9 @@ import pandas as pd
 import numpy as np
 from sklearn.linear_model import LinearRegression
 
-from preprocess import preprocess
-from millipede_selector import select_variables
-from search import router as search_router
+from core.preprocess import preprocess
+from core.millipede_selector import select_variables
+from api.search import router as search_router
 
 app = FastAPI()
 
@@ -97,11 +97,10 @@ def simulate_system(A, x0, steps):
 
 
 # ----------------------------
-# Endpoint
+# Endpoints
 # ----------------------------
 @app.get("/search")
 def search(q: str):
-    import pandas as pd
 
     # ⚠️ SAME DATA YOU USE FOR BUILD MODEL
     df = pd.read_parquet("data/fred_monthly_master_1994.parquet")

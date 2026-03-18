@@ -1,7 +1,3 @@
-# preprocess.py
-
-import pandas as pd
-
 
 def filter_missing_cols(df, max_missing=0.3):
     return df.loc[:, df.isnull().mean() <= max_missing]
