@@ -12,12 +12,24 @@ from core.preprocess import preprocess
 from core.millipede_selector import select_variables, HAS_MILLIPEDE
 from api.search import router as search_router
 from llm import load_llm
+from cognition.encoder import encode_state
+from cognition.vectorstore import retrieve
+from sentence_transformers import SentenceTransformer
+
 
 print("STARTING APP...")
 
 DATA_DIR = "data"
 PARQUET_PATH = os.path.join(DATA_DIR, "fred_monthly_master_1994.parquet")
 DF = None
+EMBED_MODEL = None
+
+def get_embed_model():
+    global EMBED_MODEL
+    if EMBED_MODEL is None:
+        print("[EMBED] loading model...")
+        EMBED_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
+    return EMBED_MODEL
 
 def get_df():
     global DF
@@ -156,36 +168,49 @@ def simulate_system(A, x0, steps):
 
 @app.post("/narrate")
 def narrate(body: dict):
+    """
+    Deterministic explanation mode.
+    Takes structural output and rewrites it clearly.
+    """
     if LLM is None:
-        return {"answer": body.get("answer")}
+        return {"answer": body.get("analysis")}
 
-    prompt = build_prompt(
-        body.get("question"),
-        body.get("answer")
-    )
+    question = body.get("question", "")
+    analysis = body.get("analysis", "")
+
+    prompt = build_structural_prompt(question, analysis)
 
     try:
         return {"answer": LLM.generate(prompt)}
     except Exception as e:
         print("[LLM ERROR]", e)
-        return {"answer": body.get("answer")}
-    
-def build_prompt(question, context_docs):
-    context = "\n".join(context_docs)
+        return {"answer": analysis}
+
+
+def build_structural_prompt(question: str, analysis: str) -> str:
+    """
+    STRICT mode:
+    - No hallucination
+    - No external knowledge
+    - Only rewrite + clarify
+    """
 
     return f"""
-You are analyzing a simulated economic system.
+You are explaining the output of a causal economic system.
 
-Use ONLY the context below.
-Do NOT give generic economic explanations.
-Explain relationships between variables.
+Only use the analysis provided below.
+Do not add outside knowledge.
+Do not generalize beyond the data.
 
-Context:
-{context}
+Rewrite it clearly and concisely.
+
+Analysis:
+{analysis}
 
 Question:
 {question}
 """
+
 
 # ----------------------------
 # Endpoints
@@ -224,41 +249,41 @@ def ask(body: dict):
     state = body.get("state", {})
     question = body.get("question", "")
 
-    drivers = state.get("drivers", [])
-    paths = state.get("paths", [])
-    shocks = state.get("shocks", [])
-
-    docs = []
-
     # ----------------------------
-    # DRIVERS
+    # 1. ENCODE STATE
     # ----------------------------
-    for d in drivers:
-        docs.append(
-            f"{d['title']} contributes {d['contribution']:.3f}"
-        )
+    docs = encode_state(state)
 
     # ----------------------------
-    # PATHS
+    # 2. RETRIEVE RELEVANT CONTEXT
     # ----------------------------
-    for p in paths:
-        chain = " → ".join(p["titles"])
-        docs.append(f"{chain} (strength {p['strength']:.2f})")
+    model = get_embed_model()
+    retrieved = retrieve(docs, question, model)
+
+    ctx = [d["text"] for d in retrieved]
 
     # ----------------------------
-    # SHOCKS
+    # 3. BUILD PROMPT
     # ----------------------------
-    for s in shocks:
-        if abs(s["value"]) > 0:
-            docs.append(f"Shock: {s['code']} = {s['value']:.2f}")
+    prompt = f"""
+You are reasoning about a simulated economic system.
 
-    prompt = build_prompt(question, docs)
+Relevant system context:
+{chr(10).join(ctx)}
+
+Answer the question using this system.
+Be precise and grounded.
+
+Question:
+{question}
+"""
 
     try:
         return {"answer": LLM.generate(prompt)}
     except Exception as e:
         print("[LLM ERROR]", e)
         return {"answer": "LLM failed"}
+
 
 @app.post("/build-model")
 def build_model(req: BuildModelRequest):
