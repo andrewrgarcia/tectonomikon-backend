@@ -2,7 +2,14 @@ import numpy as np
 import pandas as pd
 import warnings
 
-from millipede import NormalLikelihoodVariableSelector
+# -----------------------------------
+# OPTIONAL IMPORT
+# -----------------------------------
+try:
+    from millipede import NormalLikelihoodVariableSelector
+    HAS_MILLIPEDE = True
+except ImportError:
+    HAS_MILLIPEDE = False
 
 
 # ----------------------------
@@ -43,6 +50,9 @@ def run_millipede(df, target, subset_size=None):
     """
     Run MCMC and return PIP series.
     """
+    if not HAS_MILLIPEDE:
+        raise RuntimeError("millipede not installed")
+
     selector = NormalLikelihoodVariableSelector(
         df,
         target,
@@ -65,29 +75,53 @@ def run_millipede(df, target, subset_size=None):
 
 
 # ----------------------------
+# FAST FALLBACK
+# ----------------------------
+def correlation_selector(df, target, predictors, top_k):
+    """
+    Simple fallback if millipede unavailable.
+    """
+    y = df[target].values
+    scores = {}
+
+    for col in predictors:
+        x = df[col].values
+        mask = np.isfinite(x) & np.isfinite(y)
+
+        if mask.sum() < 10:
+            scores[col] = 0.0
+        else:
+            scores[col] = abs(np.corrcoef(x[mask], y[mask])[0, 1])
+
+    ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+
+    selected = [k for k, _ in ranked[:top_k]]
+
+    return {
+        "selected": selected,
+        "pip": {k: float(v) for k, v in ranked[:top_k]},
+        "all_pip": dict(ranked),
+        "method": "correlation"
+    }
+
+
+# ----------------------------
 # MAIN FUNCTION
 # ----------------------------
 def select_variables(
     df: pd.DataFrame,
     target: str,
     top_k: int = 5,
-    prescreen_k: int = PRESCREEN_K
+    prescreen_k: int = PRESCREEN_K,
+    method: str = "auto"   # NEW
 ):
     """
-    Pure variable selection via millipede.
+    Variable selection system.
 
-    Parameters
-    ----------
-    df : DataFrame (T x N)
-    target : str
-    top_k : number of variables to return
-
-    Returns
-    -------
-    dict with:
-        - selected: list[str]
-        - pip: dict[str, float]
-        - all_pip: full sorted series (optional use)
+    method:
+        - "auto"       → millipede if available else correlation
+        - "millipede"  → force millipede
+        - "corr"       → force correlation
     """
 
     assert target in df.columns, f"{target} not in dataframe"
@@ -96,11 +130,11 @@ def select_variables(
 
     predictors = [c for c in df.columns if c != target]
 
-    print(f"\n[Millipede] Target: {target}")
+    print(f"\n[Selector] Target: {target}")
     print(f"Initial predictors: {len(predictors)}")
 
     # ----------------------------
-    # PRESCREEN (ALWAYS for large US case)
+    # PRESCREEN
     # ----------------------------
     if len(predictors) > prescreen_k:
         print(f"Prescreening to top {prescreen_k} by correlation...")
@@ -114,49 +148,50 @@ def select_variables(
     cols = predictors + [target]
     df_sub = df[cols].copy()
 
-    # ----------------------------
-    # 1. Impute
-    # ----------------------------
     df_sub = df_sub.fillna(df_sub.mean())
 
-    # ----------------------------
-    # 2. STANDARDIZE (CRITICAL)
-    # ----------------------------
     mean = df_sub.mean()
     std = df_sub.std().replace(0, 1)
 
     df_sub = (df_sub - mean) / std
 
-    # ----------------------------
-    # 3. DROP ANY REMAINING NaNs
-    # ----------------------------
     df_sub = df_sub.replace([np.inf, -np.inf], np.nan).dropna()
 
-    print(f"Matrix shape passed to millipede: {df_sub.shape}")
+    print(f"Matrix shape: {df_sub.shape}")
 
     # ----------------------------
-    # RUN MCMC
+    # METHOD LOGIC
     # ----------------------------
-    try:
-        pip = run_millipede(df_sub, target)
+    use_millipede = (
+        method == "millipede" or
+        (method == "auto" and HAS_MILLIPEDE)
+    )
 
-    except MemoryError:
-        warnings.warn("MemoryError — retrying with subset_size")
-        pip = run_millipede(df_sub, target, subset_size=SUBSET_SIZE_FALLBACK)
+    if use_millipede:
+        try:
+            print("Running millipede...")
+
+            pip = run_millipede(df_sub, target)
+
+            pip = pip.sort_values(ascending=False)
+            selected = pip.index[:top_k].tolist()
+
+            print("\nTop variables (millipede):")
+            for v in selected:
+                print(f"{v}: {pip[v]:.3f}")
+
+            return {
+                "selected": selected,
+                "pip": pip[selected].to_dict(),
+                "all_pip": pip,
+                "method": "millipede"
+            }
+
+        except Exception as e:
+            print(f"Millipede failed: {e}")
+            print("Falling back to correlation...")
 
     # ----------------------------
-    # SORT + SELECT
+    # FALLBACK
     # ----------------------------
-    pip = pip.sort_values(ascending=False)
-
-    selected = pip.index[:top_k].tolist()
-
-    print("\nTop variables:")
-    for v in selected:
-        print(f"{v}: {pip[v]:.3f}")
-
-    return {
-        "selected": selected,
-        "pip": pip[selected].to_dict(),
-        "all_pip": pip  # keep for later use if needed
-    }
+    return correlation_selector(df_sub, target, predictors, top_k)

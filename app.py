@@ -75,6 +75,7 @@ class BuildModelRequest(BaseModel):
     target: str
     k: int = 5
     preprocess_mode: str = "clean"
+    selector: str = "auto"   # NEW
 
 
 class SimulateRequest(BaseModel):
@@ -185,7 +186,8 @@ def build_model(req: BuildModelRequest):
     result = select_variables(
         df=df,
         target=req.target,
-        top_k=req.k
+        top_k=req.k,
+        method=req.selector
     )
 
     selected = result["selected"]
