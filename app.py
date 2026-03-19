@@ -9,8 +9,9 @@ import numpy as np
 from sklearn.linear_model import LinearRegression
 
 from core.preprocess import preprocess
-from core.millipede_selector import select_variables
+from core.millipede_selector import select_variables, HAS_MILLIPEDE
 from api.search import router as search_router
+from llm import load_llm
 
 print("STARTING APP...")
 
@@ -52,11 +53,20 @@ def download_if_needed():
 
 app = FastAPI()
 
+LLM = None
+
 @app.on_event("startup")
 def startup_event():
-    print("Running startup tasks...")
+    global LLM
     download_if_needed()
-    print("Startup complete.")
+
+    try:
+        LLM = load_llm()
+        print("[LLM] Loaded:", type(LLM).__name__)
+    except Exception as e:
+        print("[LLM] Disabled:", e)
+        LLM = None
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -144,52 +154,30 @@ def simulate_system(A, x0, steps):
     return trajectory
 
 
-# ----------------------------
-# OPTIONAL LLM IMPORT (LIKE MILLIPEDE)
-# ----------------------------
-try:
-    from llm.local_llm import generate as llm_generate
-
-    # force a lightweight sanity check so it doesn't fail later
-    _ = llm_generate  # just reference, no execution
-
-    HAS_LLM = True
-    print("[LLM] AVAILABLE")
-
-except Exception as e:
-    HAS_LLM = False
-    print("[LLM] NOT AVAILABLE:", e)
-
-
-
 @app.post("/narrate")
 def narrate(body: dict):
-    question = body.get("question", "")
-    answer = body.get("answer", "")
+    if LLM is None:
+        return {"answer": body.get("answer")}
 
-    if not HAS_LLM:
-        return {"answer": answer}
+    prompt = build_prompt(
+        body.get("question"),
+        body.get("answer")
+    )
 
     try:
-        prompt = f"""
-User asked about: {question}
-
-Here is a system-generated economic analysis:
-
-{answer}
-
-Rewrite this as a clear explanation answering the user's query.
-Keep it concise. Do not repeat instructions.
-"""
-
-        rewritten = llm_generate(prompt)
-
-        return {"answer": rewritten}
-
+        return {"answer": LLM.generate(prompt)}
     except Exception as e:
-        print("[LLM RUNTIME FAILED]", e)
-        return {"answer": answer}
+        print("[LLM ERROR]", e)
+        return {"answer": body.get("answer")}
     
+def build_prompt(question, answer):
+    with open("llm/prompts/default.txt") as f:
+        template = f.read()
+
+    return template.format(
+        question=question or "",
+        answer=answer or ""
+    )
 
 # ----------------------------
 # Endpoints
@@ -197,6 +185,14 @@ Keep it concise. Do not repeat instructions.
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+@app.get("/capabilities")
+def capabilities():
+    return {
+        "llm": LLM is not None,
+        "llm_name": type(LLM).__name__ if LLM else None,
+        "selector": "millipede" if HAS_MILLIPEDE else "correlation"
+    }
 
 @app.get("/search")
 def search(q: str):

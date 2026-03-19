@@ -1,0 +1,7 @@
+User question:
+{question}
+
+System analysis:
+{answer}
+
+Rewrite clearly. Be precise. Do not hallucinate.
