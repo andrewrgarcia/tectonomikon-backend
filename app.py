@@ -15,18 +15,30 @@ from api.search import router as search_router
 DATA_DIR = "data"
 PARQUET_PATH = os.path.join(DATA_DIR, "fred_monthly_master_1994.parquet")
 
+FILE_ID = "1g5FvsF_b6w6bdMRBzxfL0HpNAVRB4iAU"
+
+def download_from_drive(file_id, destination):
+    URL = "https://drive.google.com/uc?export=download"
+
+    session = requests.Session()
+    response = session.get(URL, params={"id": file_id}, stream=True)
+
+    # handle large file confirmation
+    for key, value in response.cookies.items():
+        if key.startswith("download_warning"):
+            response = session.get(URL, params={"id": file_id, "confirm": value}, stream=True)
+
+    with open(destination, "wb") as f:
+        for chunk in response.iter_content(32768):
+            if chunk:
+                f.write(chunk)
+
 def download_if_needed():
     os.makedirs(DATA_DIR, exist_ok=True)
 
     if not os.path.exists(PARQUET_PATH):
-        print("Downloading dataset...")
-
-        url = "https://YOUR_LINK_HERE/fred_monthly_master_1994.parquet"
-
-        r = requests.get(url)
-        with open(PARQUET_PATH, "wb") as f:
-            f.write(r.content)
-
+        print("Downloading dataset from Google Drive...")
+        download_from_drive(FILE_ID, PARQUET_PATH)
         print("Download complete.")
 
 download_if_needed()
