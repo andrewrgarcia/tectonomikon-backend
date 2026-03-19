@@ -40,13 +40,12 @@ class Phi3LLM(BaseLLM):
             print("[LLM LOAD FAILED]", e)
             raise RuntimeError("LLM not usable")
 
-    def generate(self, prompt: str) -> str:
+    def generate(self, messages, mode: str = "system") -> str:
         model, tokenizer = self.load()
 
-        messages = [
-            {"role": "user", "content": prompt},
-        ]
-
+        # ----------------------------
+        # APPLY CHAT TEMPLATE
+        # ----------------------------
         text = tokenizer.apply_chat_template(
             messages,
             tokenize=False,
@@ -55,11 +54,18 @@ class Phi3LLM(BaseLLM):
 
         inputs = tokenizer(text, return_tensors="pt").to(model.device)
 
+        # ----------------------------
+        # GENERATION CONFIG
+        # ----------------------------
+        do_sample = (mode != "system")
+
         with torch.no_grad():
             out = model.generate(
                 **inputs,
                 max_new_tokens=200,
-                do_sample=False,
+                do_sample=do_sample,
+                temperature=0.0 if not do_sample else 0.4,
+                top_p=0.9 if do_sample else 1.0,
                 eos_token_id=tokenizer.eos_token_id,
                 pad_token_id=tokenizer.eos_token_id,
             )
@@ -68,8 +74,7 @@ class Phi3LLM(BaseLLM):
 
         result = tokenizer.decode(generated, skip_special_tokens=True)
 
-        if len(result.strip()) < 10:
-            print("[LLM WARNING] Too short → fallback")
-            return prompt
+        if len(result.strip()) < 5:
+            return "I don't have enough context to answer that."
 
-        return result
+        return result.strip()

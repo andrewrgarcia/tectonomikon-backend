@@ -11,7 +11,7 @@ from api.search import router as search_router
 from core.millipede_selector import HAS_MILLIPEDE, select_variables
 from core.preprocess import preprocess
 from llm import load_llm
-from services.llm_service import build_reasoning_prompt, build_structural_prompt
+from services.llm_service import build_messages, build_structural_prompt, format_phi3, classify_query
 from services.model_service import build_system, simulate_system
 from services.rag_service import run_rag, store_memory
 
@@ -104,28 +104,6 @@ class SimulateRequest(BaseModel):
     steps: int = 24
 
 
-
-@app.post("/narrate")
-def narrate(body: dict):
-    """
-    Deterministic explanation mode.
-    Takes structural output and rewrites it clearly.
-    """
-    if LLM is None:
-        return {"answer": body.get("analysis")}
-
-    question = body.get("question", "")
-    analysis = body.get("analysis", "")
-
-    prompt = build_structural_prompt(question, analysis)
-
-    try:
-        return {"answer": LLM.generate(prompt)}
-    except Exception as e:
-        print("[LLM ERROR]", e)
-        return {"answer": analysis}
-
-
 # ----------------------------
 # Endpoints
 # ----------------------------
@@ -155,40 +133,98 @@ def search(q: str):
 
     return matches[:20]
 
+@app.post("/narrate")
+def narrate(body: dict):
+    """
+    Deterministic explanation mode.
+    Takes structural output and rewrites it clearly.
+    """
+    if LLM is None:
+        return {"answer": body.get("analysis")}
+
+    question = body.get("question", "")
+    analysis = body.get("analysis", "")
+
+    prompt = build_structural_prompt(question, analysis)
+
+    try:
+        prompt = build_structural_prompt(question, analysis)
+        formatted = format_phi3(prompt)
+
+        return {"answer": LLM.generate(formatted)}
+    except Exception as e:
+        print("[LLM ERROR]", e)
+        return {"answer": analysis}
+
 @app.post("/ask")
 def ask(body: dict):
+    # ----------------------------
+    # 0. LLM CHECK
+    # ----------------------------
     if LLM is None:
         return {"answer": "LLM not available"}
 
-    state = body.get("state", {})
-    question = body.get("question", "")
+    # ----------------------------
+    # 1. INPUTS
+    # ----------------------------
+    state = body.get("state", {}) or {}
+    question = (body.get("question") or "").strip()
 
+    if not question:
+        return {"answer": "Ask a question."}
+
+    # ----------------------------
+    # 2. EMBEDDING MODEL
+    # ----------------------------
     model = get_embed_model()
 
     # ----------------------------
-    # RAG
+    # 3. RAG (STATE + MEMORY)
     # ----------------------------
-    ctx = run_rag(state, question, model)
-
-    # ----------------------------
-    # PROMPT
-    # ----------------------------
-    prompt = build_reasoning_prompt(ctx, question)
-
     try:
-        answer = LLM.generate(prompt)
+        ctx = run_rag(state, question, model)
+    except Exception as e:
+        print("[RAG ERROR]", e)
+        ctx = []
 
-        # ----------------------------
-        # MEMORY
-        # ----------------------------
-        store_memory(question, answer, model)
+    # ----------------------------
+    # 4. MODE ROUTING
+    # ----------------------------
+    try:
+        mode = classify_query(question, state)
+    except Exception:
+        mode = "open"
 
-        return {"answer": answer}
+    # ----------------------------
+    # 5. BUILD CHAT MESSAGES
+    # ----------------------------
+    try:
+        messages = build_messages(ctx, question)
+    except Exception as e:
+        print("[MESSAGE BUILD ERROR]", e)
+        messages = [{"role": "user", "content": question}]
 
+    # ----------------------------
+    # 6. GENERATE
+    # ----------------------------
+    try:
+        answer = LLM.generate(messages, mode=mode)
     except Exception as e:
         print("[LLM ERROR]", e)
         return {"answer": "LLM failed"}
 
+    # ----------------------------
+    # 7. MEMORY WRITE (NON-BLOCKING)
+    # ----------------------------
+    try:
+        store_memory(question, answer, state, model)
+    except Exception as e:
+        print("[MEMORY ERROR]", e)
+
+    # ----------------------------
+    # 8. RETURN
+    # ----------------------------
+    return {"answer": answer}
 
 @app.post("/build-model")
 def build_model(req: BuildModelRequest):

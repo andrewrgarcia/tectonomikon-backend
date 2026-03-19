@@ -10,20 +10,48 @@ def run_rag(state, question, embed_model):
     state_docs = encode_state(state)
     memory_docs = get_memory()
 
-    docs = state_docs + memory_docs
+    # ----------------------------
+    # RETRIEVE (FIXED)
+    # ----------------------------
+    retrieved_state = retrieve(state_docs, question, embed_model)
+    retrieved_memory = retrieve(memory_docs, question, embed_model)
 
     # ----------------------------
-    # RETRIEVE
+    # BUILD CONTEXT
     # ----------------------------
-    retrieved = retrieve(docs, question, embed_model)
-    ctx = [d["text"] for d in retrieved]
+    ctx = (
+        ["[SYSTEM] " + d["text"] for d in retrieved_state] +
+        ["[MEMORY] " + d["text"] for d in retrieved_memory[:2]]
+    )
 
     return ctx
 
 
-def store_memory(question, answer, embed_model):
-    memory_text = f"{question} → {answer[:200]}"
+def store_memory(question, answer, state, embed_model):
+    # ----------------------------
+    # SAFE DRIVER EXTRACTION
+    # ----------------------------
+    drivers = state.get("drivers", []) if state else []
 
+    top_codes = [
+        d.get("code", "")
+        for d in drivers[:3]
+        if isinstance(d, dict)
+    ]
+
+    # ----------------------------
+    # BUILD MEMORY TEXT
+    # ----------------------------
+    memory_text = f"""Question: {question}
+
+Key variables: {", ".join(top_codes)}
+
+Summary: {answer[:150]}
+"""
+
+    # ----------------------------
+    # CREATE MEMORY DOC
+    # ----------------------------
     memory_doc = {
         "type": "memory",
         "text": memory_text,

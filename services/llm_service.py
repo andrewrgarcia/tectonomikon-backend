@@ -1,15 +1,62 @@
-def build_reasoning_prompt(ctx, question):
-    return f"""
-You are reasoning about a simulated economic system.
+def format_phi3(prompt: str) -> str:
+    return f"<|endoftext|><|user|>\n{prompt}<|end|>\n<|assistant|>"
 
-Relevant system + past reasoning:
-{chr(10).join(ctx)}
+def classify_query(question: str, state: dict) -> str:
+    q = (question or "").lower()
 
-Use system data first, but build on prior reasoning if helpful.
+    variables = [
+        str(v).lower()
+        for v in state.get("variables", [])
+    ]
 
-Question:
-{question}
-"""
+    system_keywords = [
+        "shock",
+        "shocks",
+        "driver",
+        "drivers",
+        "path",
+        "paths",
+        "affect",
+        "affected",
+        "affecting",
+        "impact",
+        "move",
+        "moved",
+        "moving",
+        "contribution",
+        "contributed",
+        "trajectory",
+        "simulate",
+        "simulation",
+        "model",
+    ]
+
+    if any(v and v in q for v in variables):
+        return "system"
+
+    if any(k in q for k in system_keywords):
+        return "system"
+
+    return "open"
+
+
+def build_messages(ctx, question):
+    messages = []
+
+    if ctx:
+        context_text = "\n".join(ctx)
+
+        messages.append({
+            "role": "assistant",
+            "content": f"Context from the system:\n{context_text}"
+        })
+
+    messages.append({
+        "role": "user",
+        "content": question
+    })
+
+    return messages
 
 
 def build_structural_prompt(question, analysis):

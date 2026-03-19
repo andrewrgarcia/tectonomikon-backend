@@ -1,18 +1,47 @@
 import numpy as np
 
 
+def normalize(v):
+    norm = np.linalg.norm(v)
+    if norm == 0:
+        return v
+    return v / norm
+
+
 def cosine(a, b):
-    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-8)
+    return np.dot(a, b)
 
 
 def retrieve(docs, query, model, k=5):
-    q_emb = model.encode(query)
+    if not docs:
+        return []
+
+    # ----------------------------
+    # QUERY EMBEDDING (normalized)
+    # ----------------------------
+    q_emb = normalize(model.encode(query))
 
     scored = []
+
     for d in docs:
-        score = cosine(q_emb, d["embedding"])
+        emb = d.get("embedding")
+
+        # skip bad docs
+        if emb is None:
+            continue
+
+        emb = normalize(np.array(emb))
+
+        score = cosine(q_emb, emb)
+
         scored.append((score, d))
 
-    scored.sort(reverse=True, key=lambda x: x[0])
+    if not scored:
+        return []
+
+    # ----------------------------
+    # SORT (high → low)
+    # ----------------------------
+    scored.sort(key=lambda x: x[0], reverse=True)
 
     return [d for _, d in scored[:k]]
