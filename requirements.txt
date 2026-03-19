@@ -5,3 +5,4 @@ numpy
 requests
 pyarrow
 scikit-learn
+git+https://github.com/BasisResearch/millipede.git
