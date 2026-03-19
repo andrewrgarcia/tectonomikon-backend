@@ -7,6 +7,7 @@ import requests
 import pandas as pd
 import numpy as np
 from sklearn.linear_model import LinearRegression
+from sentence_transformers import SentenceTransformer
 
 from core.preprocess import preprocess
 from core.millipede_selector import select_variables, HAS_MILLIPEDE
@@ -14,7 +15,8 @@ from api.search import router as search_router
 from llm import load_llm
 from cognition.encoder import encode_state
 from cognition.vectorstore import retrieve
-from sentence_transformers import SentenceTransformer
+from cognition.memory import get_memory, add_memory
+
 
 
 print("STARTING APP...")
@@ -250,12 +252,16 @@ def ask(body: dict):
     question = body.get("question", "")
 
     # ----------------------------
-    # 1. ENCODE STATE
+    # 1. ENCODE STATE + MEMORY
     # ----------------------------
-    docs = encode_state(state)
+    state_docs = encode_state(state)
+
+    memory_docs = get_memory()
+
+    docs = state_docs + memory_docs
 
     # ----------------------------
-    # 2. RETRIEVE RELEVANT CONTEXT
+    # 2. RETRIEVE
     # ----------------------------
     model = get_embed_model()
     retrieved = retrieve(docs, question, model)
@@ -263,23 +269,39 @@ def ask(body: dict):
     ctx = [d["text"] for d in retrieved]
 
     # ----------------------------
-    # 3. BUILD PROMPT
+    # 3. PROMPT
     # ----------------------------
     prompt = f"""
 You are reasoning about a simulated economic system.
 
-Relevant system context:
+Relevant system + past reasoning:
 {chr(10).join(ctx)}
 
-Answer the question using this system.
-Be precise and grounded.
+Use system data first, but build on prior reasoning if helpful.
 
 Question:
 {question}
 """
 
     try:
-        return {"answer": LLM.generate(prompt)}
+        answer = LLM.generate(prompt)
+
+        # ----------------------------
+        # 4. STORE MEMORY
+        # ----------------------------
+        memory_text = f"{question} → {answer[:200]}"
+
+        memory_doc = {
+            "type": "memory",
+            "text": memory_text,
+            "embedding": model.encode(memory_text),
+            "metadata": {}
+        }
+
+        add_memory(memory_doc)
+
+        return {"answer": answer}
+
     except Exception as e:
         print("[LLM ERROR]", e)
         return {"answer": "LLM failed"}
