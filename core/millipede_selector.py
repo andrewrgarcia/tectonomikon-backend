@@ -79,31 +79,75 @@ def run_millipede(df, target, subset_size=None):
 # ----------------------------
 def correlation_selector(df, target, predictors, top_k):
     """
-    Simple fallback if millipede unavailable.
+    Vectorized correlation selector (FAST).
     """
-    y = df[target].values
-    scores = {}
 
-    for col in predictors:
-        x = df[col].values
-        mask = np.isfinite(x) & np.isfinite(y)
+    # ----------------------------
+    # Extract matrix
+    # ----------------------------
+    X = df[predictors].values  # shape (T, N)
+    y = df[target].values      # shape (T,)
 
-        if mask.sum() < 10:
-            scores[col] = 0.0
-        else:
-            scores[col] = abs(np.corrcoef(x[mask], y[mask])[0, 1])
+    # ----------------------------
+    # Mask finite rows ONCE
+    # ----------------------------
+    mask = np.isfinite(y)
+    mask &= np.all(np.isfinite(X), axis=1)
 
-    ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+    X = X[mask]
+    y = y[mask]
 
-    selected = [k for k, _ in ranked[:top_k]]
+    if X.shape[0] < 10:
+        return {
+            "selected": [],
+            "pip": {},
+            "all_pip": {},
+            "method": "correlation"
+        }
+
+    # ----------------------------
+    # STANDARDIZE (vectorized)
+    # ----------------------------
+    X_mean = X.mean(axis=0)
+    X_std = X.std(axis=0)
+    X_std[X_std == 0] = 1
+
+    y_mean = y.mean()
+    y_std = y.std() or 1
+
+    Xn = (X - X_mean) / X_std
+    yn = (y - y_mean) / y_std
+
+    # ----------------------------
+    # CORRELATION = dot product
+    # ----------------------------
+    corrs = np.abs(Xn.T @ yn) / len(yn)
+
+    # ----------------------------
+    # RANK
+    # ----------------------------
+    idx = np.argsort(-corrs)
+
+    selected_idx = idx[:top_k]
+
+    selected = [predictors[i] for i in selected_idx]
+
+    pip = {
+        predictors[i]: float(corrs[i])
+        for i in selected_idx
+    }
+
+    all_pip = {
+        predictors[i]: float(corrs[i])
+        for i in idx
+    }
 
     return {
         "selected": selected,
-        "pip": {k: float(v) for k, v in ranked[:top_k]},
-        "all_pip": dict(ranked),
+        "pip": pip,
+        "all_pip": all_pip,
         "method": "correlation"
     }
-
 
 # ----------------------------
 # MAIN FUNCTION
