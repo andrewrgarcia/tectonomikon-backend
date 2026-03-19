@@ -12,38 +12,51 @@ from core.preprocess import preprocess
 from core.millipede_selector import select_variables
 from api.search import router as search_router
 
+print("STARTING APP...")
+
 DATA_DIR = "data"
 PARQUET_PATH = os.path.join(DATA_DIR, "fred_monthly_master_1994.parquet")
+DF = None
 
-FILE_ID = "1g5FvsF_b6w6bdMRBzxfL0HpNAVRB4iAU"
-
-def download_from_drive(file_id, destination):
-    URL = "https://drive.google.com/uc?export=download"
-
-    session = requests.Session()
-    response = session.get(URL, params={"id": file_id}, stream=True)
-
-    # handle large file confirmation
-    for key, value in response.cookies.items():
-        if key.startswith("download_warning"):
-            response = session.get(URL, params={"id": file_id, "confirm": value}, stream=True)
-
-    with open(destination, "wb") as f:
-        for chunk in response.iter_content(32768):
-            if chunk:
-                f.write(chunk)
+def get_df():
+    global DF
+    if DF is None:
+        print("Loading dataset into memory...")
+        DF = pd.read_parquet(PARQUET_PATH)
+    return DF
 
 def download_if_needed():
     os.makedirs(DATA_DIR, exist_ok=True)
 
-    if not os.path.exists(PARQUET_PATH):
-        print("Downloading dataset from Google Drive...")
-        download_from_drive(FILE_ID, PARQUET_PATH)
-        print("Download complete.")
+    if os.path.exists(PARQUET_PATH):
+        print("Dataset already exists.")
+        return
 
-download_if_needed()
+    print("Downloading dataset...")
+
+    url = "https://drive.google.com/uc?export=download&id=1g5FvsF_b6w6bdMRBzxfL0HpNAVRB4iAU"
+
+    r = requests.get(url, stream=True)
+
+    print("Status code:", r.status_code)
+
+    total = 0
+    with open(PARQUET_PATH, "wb") as f:
+        for chunk in r.iter_content(1024 * 1024):
+            if chunk:
+                f.write(chunk)
+                total += len(chunk)
+                print(f"Downloaded {total / 1e6:.2f} MB")
+
+    print("Download complete.")
 
 app = FastAPI()
+
+@app.on_event("startup")
+def startup_event():
+    print("Running startup tasks...")
+    download_if_needed()
+    print("Startup complete.")
 
 app.add_middleware(
     CORSMiddleware,
@@ -137,7 +150,7 @@ def simulate_system(A, x0, steps):
 def search(q: str):
 
     # ⚠️ SAME DATA YOU USE FOR BUILD MODEL
-    df = pd.read_parquet("data/fred_monthly_master_1994.parquet")
+    df = get_df()
 
     cols = df.columns.tolist()
 
@@ -153,7 +166,7 @@ def build_model(req: BuildModelRequest):
     # ----------------------------
     # 1. Load data
     # ----------------------------
-    df = pd.read_parquet("data/fred_monthly_master_1994.parquet")
+    df = get_df()
 
     if req.target not in df.columns:
         return {"error": f"Target '{req.target}' not found"}
