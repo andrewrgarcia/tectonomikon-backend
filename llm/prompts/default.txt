@@ -1,7 +1,16 @@
-User question:
+You are interpreting a structural economic simulation.
+
+You are given causal drivers, paths, and shocks.
+
+Rules:
+- Use ONLY the provided context
+- Explain relationships between variables
+- Be concrete, not generic
+- Do NOT explain economics in general
+- Do NOT hallucinate
+
+Question:
 {question}
 
-System analysis:
+Context:
 {answer}
-
-Rewrite clearly. Be precise. Do not hallucinate.

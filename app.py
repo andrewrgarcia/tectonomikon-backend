@@ -170,14 +170,22 @@ def narrate(body: dict):
         print("[LLM ERROR]", e)
         return {"answer": body.get("answer")}
     
-def build_prompt(question, answer):
-    with open("llm/prompts/default.txt") as f:
-        template = f.read()
+def build_prompt(question, context_docs):
+    context = "\n".join(context_docs)
 
-    return template.format(
-        question=question or "",
-        answer=answer or ""
-    )
+    return f"""
+You are analyzing a simulated economic system.
+
+Use ONLY the context below.
+Do NOT give generic economic explanations.
+Explain relationships between variables.
+
+Context:
+{context}
+
+Question:
+{question}
+"""
 
 # ----------------------------
 # Endpoints
@@ -207,6 +215,50 @@ def search(q: str):
     matches = [c for c in cols if q in c.lower()]
 
     return matches[:20]
+
+@app.post("/ask")
+def ask(body: dict):
+    if LLM is None:
+        return {"answer": "LLM not available"}
+
+    state = body.get("state", {})
+    question = body.get("question", "")
+
+    drivers = state.get("drivers", [])
+    paths = state.get("paths", [])
+    shocks = state.get("shocks", [])
+
+    docs = []
+
+    # ----------------------------
+    # DRIVERS
+    # ----------------------------
+    for d in drivers:
+        docs.append(
+            f"{d['title']} contributes {d['contribution']:.3f}"
+        )
+
+    # ----------------------------
+    # PATHS
+    # ----------------------------
+    for p in paths:
+        chain = " → ".join(p["titles"])
+        docs.append(f"{chain} (strength {p['strength']:.2f})")
+
+    # ----------------------------
+    # SHOCKS
+    # ----------------------------
+    for s in shocks:
+        if abs(s["value"]) > 0:
+            docs.append(f"Shock: {s['code']} = {s['value']:.2f}")
+
+    prompt = build_prompt(question, docs)
+
+    try:
+        return {"answer": LLM.generate(prompt)}
+    except Exception as e:
+        print("[LLM ERROR]", e)
+        return {"answer": "LLM failed"}
 
 @app.post("/build-model")
 def build_model(req: BuildModelRequest):
