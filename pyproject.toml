@@ -14,6 +14,7 @@ dependencies = [
     "pyarrow>=23.0.1",
     "requests>=2.32.5",
     "scikit-learn>=1.8.0",
+    "sentence-transformers>=5.3.0",
     "torch>=2.10.0",
     "transformers>=5.3.0",
     "uvicorn>=0.42.0",
@@ -21,3 +22,30 @@ dependencies = [
 
 [tool.uv.sources]
 millipede = { git = "https://github.com/BasisResearch/millipede.git" }
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.7",
+    "vulture>=2.15",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes (unused imports, undefined names)
+    "I",   # import sorting
+    "B",   # bugbear (good sanity checks)
+    "UP",  # pyupgrade
+]
+
+extend-select = [
+    "F401",  # unused imports
+    "F841",  # unused variables
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
