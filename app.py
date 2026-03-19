@@ -147,6 +147,10 @@ def simulate_system(A, x0, steps):
 # ----------------------------
 # Endpoints
 # ----------------------------
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
 @app.get("/search")
 def search(q: str):
 
