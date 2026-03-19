@@ -1,23 +1,19 @@
+import os
+
+import pandas as pd
+import requests
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-
-import os
-import requests
-import pandas as pd
-import numpy as np
-from sklearn.linear_model import LinearRegression
 from sentence_transformers import SentenceTransformer
 
-from core.preprocess import preprocess
-from core.millipede_selector import select_variables, HAS_MILLIPEDE
 from api.search import router as search_router
+from core.millipede_selector import HAS_MILLIPEDE, select_variables
+from core.preprocess import preprocess
 from llm import load_llm
-from cognition.encoder import encode_state
-from cognition.vectorstore import retrieve
-from cognition.memory import get_memory, add_memory
-
-
+from services.llm_service import build_reasoning_prompt, build_structural_prompt
+from services.model_service import build_system, simulate_system
+from services.rag_service import run_rag, store_memory
 
 print("STARTING APP...")
 
@@ -108,65 +104,6 @@ class SimulateRequest(BaseModel):
     steps: int = 24
 
 
-# ----------------------------
-# Core builder
-# ----------------------------
-def build_system(df, target, selected_vars):
-    vars_all = selected_vars + [target]
-
-    df = df[vars_all].dropna()
-
-    # ----------------------------
-    # Normalize
-    # ----------------------------
-    mean = df.mean()
-    std = df.std().replace(0, 1)
-
-    df_norm = (df - mean) / std
-
-    # ----------------------------
-    # Learn dynamics
-    # ----------------------------
-    X = df_norm.shift(1).dropna()
-    Y = df_norm.loc[X.index]
-
-    model = LinearRegression(fit_intercept=False)
-    model.fit(X, Y)
-
-    A = model.coef_
-
-    # ----------------------------
-    # Spectral normalization
-    # ----------------------------
-    eigvals = np.linalg.eigvals(A)
-    max_eig = np.max(np.abs(eigvals))
-
-    if max_eig > 0:
-        A = A / max_eig * 0.95
-
-    return {
-        "variables": vars_all,
-        "A": A.tolist(),
-        "mean": mean[vars_all].tolist(),
-        "std": std[vars_all].tolist()
-    }
-
-
-# ----------------------------
-# Simulation function
-# ----------------------------
-def simulate_system(A, x0, steps):
-    A = np.array(A)
-    x = np.array(x0)
-
-    trajectory = [x.tolist()]
-
-    for _ in range(steps):
-        x = A @ x
-        trajectory.append(x.tolist())
-
-    return trajectory
-
 
 @app.post("/narrate")
 def narrate(body: dict):
@@ -187,31 +124,6 @@ def narrate(body: dict):
     except Exception as e:
         print("[LLM ERROR]", e)
         return {"answer": analysis}
-
-
-def build_structural_prompt(question: str, analysis: str) -> str:
-    """
-    STRICT mode:
-    - No hallucination
-    - No external knowledge
-    - Only rewrite + clarify
-    """
-
-    return f"""
-You are explaining the output of a causal economic system.
-
-Only use the analysis provided below.
-Do not add outside knowledge.
-Do not generalize beyond the data.
-
-Rewrite it clearly and concisely.
-
-Analysis:
-{analysis}
-
-Question:
-{question}
-"""
 
 
 # ----------------------------
@@ -251,54 +163,25 @@ def ask(body: dict):
     state = body.get("state", {})
     question = body.get("question", "")
 
-    # ----------------------------
-    # 1. ENCODE STATE + MEMORY
-    # ----------------------------
-    state_docs = encode_state(state)
-
-    memory_docs = get_memory()
-
-    docs = state_docs + memory_docs
-
-    # ----------------------------
-    # 2. RETRIEVE
-    # ----------------------------
     model = get_embed_model()
-    retrieved = retrieve(docs, question, model)
-
-    ctx = [d["text"] for d in retrieved]
 
     # ----------------------------
-    # 3. PROMPT
+    # RAG
     # ----------------------------
-    prompt = f"""
-You are reasoning about a simulated economic system.
+    ctx = run_rag(state, question, model)
 
-Relevant system + past reasoning:
-{chr(10).join(ctx)}
-
-Use system data first, but build on prior reasoning if helpful.
-
-Question:
-{question}
-"""
+    # ----------------------------
+    # PROMPT
+    # ----------------------------
+    prompt = build_reasoning_prompt(ctx, question)
 
     try:
         answer = LLM.generate(prompt)
 
         # ----------------------------
-        # 4. STORE MEMORY
+        # MEMORY
         # ----------------------------
-        memory_text = f"{question} → {answer[:200]}"
-
-        memory_doc = {
-            "type": "memory",
-            "text": memory_text,
-            "embedding": model.encode(memory_text),
-            "metadata": {}
-        }
-
-        add_memory(memory_doc)
+        store_memory(question, answer, model)
 
         return {"answer": answer}
 
