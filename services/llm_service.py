@@ -2,7 +2,11 @@ def format_phi3(prompt: str) -> str:
     return f"<|endoftext|><|user|>\n{prompt}<|end|>\n<|assistant|>"
 
 def classify_query(question: str, state: dict) -> str:
-    q = (question or "").lower()
+    q = (question or "").lower().strip()
+
+    # short queries → usually variable lookup
+    if len(q) < 12:
+        return "system"
 
     variables = [
         str(v).lower()
@@ -10,25 +14,10 @@ def classify_query(question: str, state: dict) -> str:
     ]
 
     system_keywords = [
-        "shock",
-        "shocks",
-        "driver",
-        "drivers",
-        "path",
-        "paths",
-        "affect",
-        "affected",
-        "affecting",
-        "impact",
-        "move",
-        "moved",
-        "moving",
-        "contribution",
-        "contributed",
-        "trajectory",
-        "simulate",
-        "simulation",
-        "model",
+        "shock", "driver", "path",
+        "affect", "impact", "move",
+        "contribution", "trajectory",
+        "simulate", "model"
     ]
 
     if any(v and v in q for v in variables):
@@ -40,45 +29,58 @@ def classify_query(question: str, state: dict) -> str:
     return "open"
 
 
-def build_messages(ctx, question):
+def build_messages(ctx, question, mode="open", history=None):
+    """
+    Full conversational message builder with:
+    - mode routing
+    - short-term memory
+    - RAG injection (system mode only)
+    """
+
+    history = history or []
     messages = []
 
-    if ctx:
-        context_text = "\n".join(ctx)
-
+    # ----------------------------
+    # SYSTEM ROLE
+    # ----------------------------
+    if mode == "open":
         messages.append({
-            "role": "assistant",
-            "content": f"Context from the system:\n{context_text}"
+            "role": "system",
+            "content": "You are a helpful assistant. Respond naturally."
+        })
+    else:
+        messages.append({
+            "role": "system",
+            "content": "You analyze a causal economic system. Use provided data when available."
         })
 
+    # ----------------------------
+    # CHAT HISTORY (last 2 turns)
+    # ----------------------------
+    for h in history[-2:]:
+        q = h.get("question")
+        a = h.get("answer")
+
+        if q:
+            messages.append({"role": "user", "content": q})
+        if a:
+            messages.append({"role": "assistant", "content": a})
+
+    # ----------------------------
+    # SYSTEM CONTEXT (ONLY in system mode)
+    # ----------------------------
+    if mode == "system" and ctx:
+        messages.append({
+            "role": "assistant",
+            "content": "Relevant system data:\n" + "\n".join(ctx)
+        })
+
+    # ----------------------------
+    # CURRENT QUESTION
+    # ----------------------------
     messages.append({
         "role": "user",
         "content": question
     })
 
     return messages
-
-
-def build_structural_prompt(question, analysis):
-    """
-    STRICT mode:
-    - No hallucination
-    - No external knowledge
-    - Only rewrite + clarify
-    """
-    
-    return f"""
-You are explaining the output of a causal economic system.
-
-Only use the analysis provided below.
-Do not add outside knowledge.
-Do not generalize beyond the data.
-
-Rewrite it clearly and concisely.
-
-Analysis:
-{analysis}
-
-Question:
-{question}
-"""

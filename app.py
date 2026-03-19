@@ -11,7 +11,7 @@ from api.search import router as search_router
 from core.millipede_selector import HAS_MILLIPEDE, select_variables
 from core.preprocess import preprocess
 from llm import load_llm
-from services.llm_service import build_messages, build_structural_prompt, format_phi3, classify_query
+from services.llm_service import build_messages, classify_query
 from services.model_service import build_system, simulate_system
 from services.rag_service import run_rag, store_memory
 
@@ -137,7 +137,7 @@ def search(q: str):
 def narrate(body: dict):
     """
     Deterministic explanation mode.
-    Takes structural output and rewrites it clearly.
+    Rewrites structural output clearly.
     """
     if LLM is None:
         return {"answer": body.get("analysis")}
@@ -145,13 +145,34 @@ def narrate(body: dict):
     question = body.get("question", "")
     analysis = body.get("analysis", "")
 
-    prompt = build_structural_prompt(question, analysis)
+    # ----------------------------
+    # BUILD MESSAGES (chat-native)
+    # ----------------------------
+    messages = [
+        {
+            "role": "user",
+            "content": f"""
+You are explaining the output of a causal economic system.
+
+Only use the analysis below.
+Do not add external knowledge.
+Do not generalize.
+
+Rewrite clearly and concisely.
+
+Analysis:
+{analysis}
+
+Question:
+{question}
+"""
+        }
+    ]
 
     try:
-        prompt = build_structural_prompt(question, analysis)
-        formatted = format_phi3(prompt)
+        answer = LLM.generate(messages, mode="system")
+        return {"answer": answer}
 
-        return {"answer": LLM.generate(formatted)}
     except Exception as e:
         print("[LLM ERROR]", e)
         return {"answer": analysis}
@@ -169,6 +190,7 @@ def ask(body: dict):
     # ----------------------------
     state = body.get("state", {}) or {}
     question = (body.get("question") or "").strip()
+    history = body.get("history", []) or []
 
     if not question:
         return {"answer": "Ask a question."}
@@ -179,7 +201,7 @@ def ask(body: dict):
     model = get_embed_model()
 
     # ----------------------------
-    # 3. RAG (STATE + MEMORY)
+    # 3. RAG
     # ----------------------------
     try:
         ctx = run_rag(state, question, model)
@@ -196,12 +218,12 @@ def ask(body: dict):
         mode = "open"
 
     # ----------------------------
-    # 5. BUILD CHAT MESSAGES
+    # 5. BUILD MESSAGES
     # ----------------------------
     try:
-        messages = build_messages(ctx, question)
+        messages = build_messages(ctx, question, mode, history)
     except Exception as e:
-        print("[MESSAGE BUILD ERROR]", e)
+        print("[MESSAGE ERROR]", e)
         messages = [{"role": "user", "content": question}]
 
     # ----------------------------
@@ -214,7 +236,7 @@ def ask(body: dict):
         return {"answer": "LLM failed"}
 
     # ----------------------------
-    # 7. MEMORY WRITE (NON-BLOCKING)
+    # 7. STORE MEMORY
     # ----------------------------
     try:
         store_memory(question, answer, state, model)
