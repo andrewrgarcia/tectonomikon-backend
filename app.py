@@ -145,6 +145,53 @@ def simulate_system(A, x0, steps):
 
 
 # ----------------------------
+# OPTIONAL LLM IMPORT (LIKE MILLIPEDE)
+# ----------------------------
+try:
+    from llm.local_llm import generate as llm_generate
+
+    # force a lightweight sanity check so it doesn't fail later
+    _ = llm_generate  # just reference, no execution
+
+    HAS_LLM = True
+    print("[LLM] AVAILABLE")
+
+except Exception as e:
+    HAS_LLM = False
+    print("[LLM] NOT AVAILABLE:", e)
+
+
+
+@app.post("/narrate")
+def narrate(body: dict):
+    question = body.get("question", "")
+    answer = body.get("answer", "")
+
+    if not HAS_LLM:
+        return {"answer": answer}
+
+    try:
+        prompt = f"""
+User asked about: {question}
+
+Here is a system-generated economic analysis:
+
+{answer}
+
+Rewrite this as a clear explanation answering the user's query.
+Keep it concise. Do not repeat instructions.
+"""
+
+        rewritten = llm_generate(prompt)
+
+        return {"answer": rewritten}
+
+    except Exception as e:
+        print("[LLM RUNTIME FAILED]", e)
+        return {"answer": answer}
+    
+
+# ----------------------------
 # Endpoints
 # ----------------------------
 @app.get("/health")
